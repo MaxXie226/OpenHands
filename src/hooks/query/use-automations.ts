@@ -90,6 +90,29 @@ export function useToggleAutomation() {
   });
 }
 
+export function useDeleteAutomationDraft() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => AutomationService.deleteServerDraft(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: AUTOMATION_DRAFTS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: AUTOMATIONS_QUERY_KEY });
+    },
+  });
+}
+
+export function useDispatchAutomationDraft() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => AutomationService.dispatchServerDraft(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: AUTOMATION_DRAFTS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: AUTOMATIONS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: ["user", "conversations"] });
+    },
+  });
+}
+
 export function useImportAutomation() {
   const queryClient = useQueryClient();
   const active = useActiveBackend();

@@ -59,6 +59,7 @@ vi.mock("#/api/automation-service/automation-service.api", () => ({
     getServerDraft: vi.fn(),
     deleteServerDraft: vi.fn(),
     listServerDrafts: vi.fn(),
+    listAutomationRuns: vi.fn().mockResolvedValue({ runs: [], total: 0 }),
     dispatchServerDraft: vi.fn(),
     supportsAutomationDrafts: vi.fn(),
   },
@@ -209,7 +210,7 @@ describe("AutomationSetupPanel", () => {
       }),
     });
     expect(screen.getByTestId("automation-setup-status")).toHaveTextContent(
-      "AUTOMATION_SETUP$TEST_PASSED",
+      "AUTOMATION_SETUP$READY_TO_TEST",
     );
   });
 
@@ -455,7 +456,7 @@ describe("AutomationSetupPanel", () => {
       ).toBeInTheDocument();
       expect(
         screen.getByTestId("automation-setup-draft-validity"),
-      ).toHaveTextContent("AUTOMATION_SETUP$TEST_PASSED");
+      ).toHaveTextContent("AUTOMATION_SETUP$READY_TO_TEST");
 
       // Second save reuses the persisted id rather than creating again.
       await user.click(screen.getByTestId("automation-setup-save-draft"));

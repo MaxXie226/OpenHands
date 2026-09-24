@@ -31,6 +31,8 @@ vi.mock("#/api/automation-service/automation-service.api", () => ({
   default: {
     getAutomations: vi.fn(),
     listServerDrafts: vi.fn(),
+    deleteServerDraft: vi.fn(),
+    dispatchServerDraft: vi.fn(),
     updateAutomation: vi.fn(),
     toggleAutomation: vi.fn(),
     deleteAutomation: vi.fn(),
@@ -182,7 +184,7 @@ afterEach(() => {
 });
 
 describe("AutomationsList — draft sections", () => {
-  it("renders saved setup drafts separately from materialized draft automations", async () => {
+  it("renders saved setup drafts as actionable cards and hides materialized test artifacts", async () => {
     vi.mocked(AutomationService.getAutomations).mockResolvedValue({
       automations: [automation, materializedDraftAutomation],
       total: 2,
@@ -197,18 +199,68 @@ describe("AutomationsList — draft sections", () => {
       await screen.findByText(I18nKey.AUTOMATIONS$SAVED_DRAFTS),
     ).toBeInTheDocument();
     expect(screen.getByText("Saved setup draft")).toBeInTheDocument();
+    const draftCard = screen.getByTestId("automation-setup-draft-draft-1");
+    expect(draftCard).toBeInTheDocument();
     expect(
-      screen.getByTestId("automation-setup-draft-draft-1"),
+      within(draftCard).getByTestId("automation-setup-draft-resume-draft-1"),
+    ).toBeInTheDocument();
+    expect(
+      within(draftCard).getByTestId("automation-setup-draft-test-draft-1"),
+    ).toBeInTheDocument();
+    expect(
+      within(draftCard).getByTestId("automation-setup-draft-delete-draft-1"),
     ).toBeInTheDocument();
 
     expect(
-      screen.getByText(I18nKey.AUTOMATIONS$MATERIALIZED_DRAFTS),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Materialized test draft")).toBeInTheDocument();
-
+      screen.queryByText(I18nKey.AUTOMATIONS$MATERIALIZED_DRAFTS),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByTestId("automation-card-auto-draft-1"),
+      screen.queryByText("Materialized test draft"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("automation-card-auto-draft-1"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("can test and delete saved setup drafts", async () => {
+    const user = userEvent.setup();
+    vi.mocked(AutomationService.getAutomations).mockResolvedValue(listResponse);
+    vi.mocked(AutomationService.listServerDrafts).mockResolvedValue(
+      draftListResponse,
+    );
+    vi.mocked(AutomationService.dispatchServerDraft).mockResolvedValue({
+      id: "run-1",
+    } as never);
+    vi.mocked(AutomationService.deleteServerDraft).mockResolvedValue(undefined);
+
+    renderList();
+
+    const draftCard = await screen.findByTestId(
+      "automation-setup-draft-draft-1",
+    );
+    await user.click(
+      within(draftCard).getByTestId("automation-setup-draft-test-draft-1"),
+    );
+    await waitFor(() =>
+      expect(AutomationService.dispatchServerDraft).toHaveBeenCalledWith(
+        "draft-1",
+      ),
+    );
+
+    await user.click(
+      within(draftCard).getByTestId("automation-setup-draft-delete-draft-1"),
+    );
+    expect(
+      screen.getByText(I18nKey.AUTOMATION_SETUP$DELETE_DRAFT_TITLE),
     ).toBeInTheDocument();
+    await user.click(
+      screen.getByTestId("automation-setup-draft-delete-confirm"),
+    );
+    await waitFor(() =>
+      expect(AutomationService.deleteServerDraft).toHaveBeenCalledWith(
+        "draft-1",
+      ),
+    );
   });
 });
 

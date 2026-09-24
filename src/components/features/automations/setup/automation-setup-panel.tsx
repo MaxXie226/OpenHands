@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -362,6 +363,36 @@ function extractDraftDispatchErrors(error: unknown): string | null {
   return null;
 }
 
+function draftRunFinishedSuccessfully(run: AutomationRun): boolean {
+  return String(run.status).toUpperCase() === "COMPLETED";
+}
+
+function draftRunFinishedWithFailure(run: AutomationRun): boolean {
+  const status = String(run.status).toUpperCase();
+  return status === "FAILED" || status === "CANCELLED" || status === "SKIPPED";
+}
+
+function getDraftExecutionStatusText(
+  draft: AutomationDraftApiResponse,
+  runs: AutomationRun[],
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
+  const latestRun = runs[0];
+  if (latestRun) {
+    if (draftRunFinishedSuccessfully(latestRun)) {
+      return t(I18nKey.AUTOMATION_SETUP$LATEST_TEST_PASSED);
+    }
+    if (draftRunFinishedWithFailure(latestRun)) {
+      return t(I18nKey.AUTOMATION_SETUP$LATEST_TEST_FAILED);
+    }
+    return t(I18nKey.AUTOMATION_SETUP$LATEST_TEST_RUNNING);
+  }
+  return (
+    draft.validationErrors?.[0]?.message ??
+    t(I18nKey.AUTOMATION_SETUP$READY_TO_TEST)
+  );
+}
+
 function DraftRunDetailsCard({
   draft,
   runs,
@@ -371,8 +402,7 @@ function DraftRunDetailsCard({
 }) {
   const { t, i18n } = useTranslation("openhands");
   const validationMessage = draft.validationErrors?.[0]?.message ?? null;
-  const statusText =
-    validationMessage ?? t(I18nKey.AUTOMATION_SETUP$TEST_PASSED);
+  const statusText = getDraftExecutionStatusText(draft, runs, t);
 
   return (
     <section
@@ -504,6 +534,9 @@ export function AutomationSetupPanel({
     useState<AutomationDraftApiResponse | null>(null);
   const [draftRuns, setDraftRuns] = useState<AutomationRun[]>([]);
   const [isHydratingServerDraft, setIsHydratingServerDraft] = useState(false);
+  const [saveState, setSaveState] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
   const [isTaggedDraftMissing, setIsTaggedDraftMissing] = useState(false);
   const propTaggedServerDraftId =
     getAutomationDraftIdFromTags(conversationTags);
@@ -793,6 +826,7 @@ export function AutomationSetupPanel({
   ) => {
     clearQueuedStreams();
     setStatusMessage(null);
+    setSaveState("idle");
     setForm((previous) => ({ ...previous, [field]: value }));
     if (!conversationId) return;
     patchAutomationSetupDraft(
@@ -864,6 +898,47 @@ export function AutomationSetupPanel({
     tarballPath: string = PREFLIGHT_TARBALL_PATH,
   ): SetupRequestBody =>
     kind === "custom" ? buildCustomBody(tarballPath) : buildPresetBody();
+  const draftValidationByField = useMemo(() => {
+    const byField = new Map<string, string>();
+    for (const error of serverDraft?.validationErrors ?? []) {
+      if (error.field && !byField.has(error.field)) {
+        byField.set(error.field, error.message);
+      }
+    }
+    return byField;
+  }, [serverDraft?.validationErrors]);
+  const fieldError = (field: string): string | undefined =>
+    draftValidationByField.get(field);
+  const isDraftDirty = useMemo(() => {
+    if (!serverDraft) return true;
+    return (
+      serverDraft.endpoint !== draftEndpoint(kind) ||
+      (serverDraft.name ?? "") !== normalizedName() ||
+      JSON.stringify(serverDraft.draft) !== JSON.stringify(draftRequestBody())
+    );
+  }, [
+    serverDraft,
+    kind,
+    name,
+    prompt,
+    repository,
+    pluginSource,
+    pluginRef,
+    customCode,
+    entrypoint,
+    setupScriptPath,
+    setupScript,
+    triggerKind,
+    frequency,
+    time,
+    timezone,
+    customSchedule,
+    eventSource,
+    eventKey,
+    eventFilter,
+    showTimeout,
+    timeoutSeconds,
+  ]);
   const uploadCustomArchive = async (): Promise<string> => {
     const archive = await packTarGzip([
       { name: MAIN_PY_FILENAME, content: customCode, mode: 0o644 },
@@ -903,7 +978,7 @@ export function AutomationSetupPanel({
     setStatusMessage({
       kind: result.valid ? "success" : "error",
       text: result.valid
-        ? t(I18nKey.AUTOMATION_SETUP$TEST_PASSED)
+        ? t(I18nKey.AUTOMATION_SETUP$READY_TO_TEST)
         : result.errors[0]?.message || t(I18nKey.SETUP$SUBMIT_FAILED),
     });
   };
@@ -954,8 +1029,10 @@ export function AutomationSetupPanel({
   };
   const handleSaveDraft = async () => {
     setIsSubmitting(true);
+    setSaveState("saving");
     try {
       const saved = await persistServerDraft();
+      setSaveState("saved");
       setStatusMessage({
         kind: "success",
         text:
@@ -964,12 +1041,14 @@ export function AutomationSetupPanel({
       });
     } catch (error) {
       if (isDraftEndpointUnavailable(error)) {
+        setSaveState("saved");
         setStatusMessage({
           kind: "success",
           text: t(I18nKey.AUTOMATION_SETUP$DRAFT_SAVED),
         });
         return;
       }
+      setSaveState("error");
       displayErrorToast(error instanceof Error ? error.message : null);
     } finally {
       setIsSubmitting(false);
@@ -978,6 +1057,7 @@ export function AutomationSetupPanel({
   const handleTest = async () => {
     if (!validateRequiredFields()) return;
     setIsSubmitting(true);
+    setSaveState("saving");
     try {
       // Persist the current form state as a draft first, then dispatch it.
       // The service materializes the validated draft body into a disabled
@@ -986,6 +1066,7 @@ export function AutomationSetupPanel({
       const tarballPath =
         kind === "custom" ? await uploadCustomArchive() : undefined;
       const saved = await persistServerDraft(tarballPath);
+      setSaveState("saved");
 
       if (!saved.dispatchable) {
         setStatusMessage({
@@ -1019,9 +1100,11 @@ export function AutomationSetupPanel({
       });
     } catch (error) {
       if (isDraftEndpointUnavailable(error)) {
+        setSaveState("saved");
         await runPreflightValidation();
         return;
       }
+      setSaveState("error");
       const dispatchError = extractDraftDispatchErrors(error);
       if (dispatchError) {
         setStatusMessage({
@@ -1038,6 +1121,7 @@ export function AutomationSetupPanel({
   const handleCreate = async () => {
     if (!validateRequiredFields()) return;
     setIsSubmitting(true);
+    setSaveState(serverDraftId ? "saving" : saveState);
     try {
       let created: Record<string, unknown>;
       if (kind === "custom") {
@@ -1052,6 +1136,7 @@ export function AutomationSetupPanel({
           kind,
         );
       }
+      setSaveState("saved");
       toast.success(t(I18nKey.AUTOMATION_SETUP$CREATED));
       // The draft has been finalized into a real automation; drop the
       // persisted draft row so it does not linger as an incomplete setup.
@@ -1076,6 +1161,37 @@ export function AutomationSetupPanel({
     }
   };
 
+  useEffect(() => {
+    const automationId = serverDraft?.materializedAutomationId;
+    if (!automationId) {
+      setDraftRuns([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+    AutomationService.listAutomationRuns(automationId, { limit: 10, offset: 0 })
+      .then((response) => {
+        if (!cancelled && response.runs.length > 0) setDraftRuns(response.runs);
+      })
+      .catch(() => {
+        if (!cancelled) setDraftRuns((previous) => previous);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [serverDraft?.materializedAutomationId]);
+
+  const saveStateLabel = () => {
+    if (saveState === "saving") return t(I18nKey.AUTOMATION_SETUP$SAVING);
+    if (saveState === "error") return t(I18nKey.AUTOMATION_SETUP$SAVE_FAILED);
+    if (serverDraft && !isDraftDirty) {
+      return t(I18nKey.AUTOMATION_SETUP$SAVED_JUST_NOW);
+    }
+    if (isDraftDirty) return t(I18nKey.AUTOMATION_SETUP$UNSAVED_CHANGES);
+    return null;
+  };
+
   const renderToolbarActions = () => (
     <div className="flex shrink-0 items-center gap-2">
       <BrandButton
@@ -1094,7 +1210,11 @@ export function AutomationSetupPanel({
         isDisabled={isSubmitting}
         onClick={handleTest}
       >
-        {t(I18nKey.AUTOMATION_SETUP$TEST)}
+        {isSubmitting
+          ? t(I18nKey.AUTOMATION_SETUP$STARTING_TEST)
+          : isDraftDirty
+            ? t(I18nKey.AUTOMATION_SETUP$SAVE_AND_TEST)
+            : t(I18nKey.AUTOMATION_SETUP$TEST_DRAFT)}
       </BrandButton>
       <BrandButton
         type="button"
@@ -1137,6 +1257,15 @@ export function AutomationSetupPanel({
             </div>
             {renderToolbarActions()}
           </header>
+        ) : null}
+
+        {saveStateLabel() ? (
+          <div
+            data-testid="automation-setup-save-state"
+            className="border-b border-[var(--oh-border)] px-5 py-2 text-xs text-[var(--oh-muted)]"
+          >
+            {saveStateLabel()}
+          </div>
         ) : null}
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6">
@@ -1182,6 +1311,7 @@ export function AutomationSetupPanel({
               label={t(I18nKey.AUTOMATIONS$NAME)}
               suffix={agentUpdatedSuffix("name")}
               isStreaming={streamingField === "name"}
+              errorText={fieldError("name")}
             >
               <input
                 data-testid="automation-setup-name"
@@ -1219,6 +1349,7 @@ export function AutomationSetupPanel({
                 prompt={prompt}
                 updatedSuffix={agentUpdatedSuffix("prompt")}
                 isStreaming={streamingField === "prompt"}
+                errorText={fieldError("prompt")}
                 onPromptChange={(value) => updateField("prompt", value)}
               />
             ) : (
@@ -1435,11 +1566,13 @@ function PromptFields({
   prompt,
   updatedSuffix,
   isStreaming,
+  errorText,
   onPromptChange,
 }: {
   prompt: string;
   updatedSuffix?: string;
   isStreaming: boolean;
+  errorText?: string;
   onPromptChange: (value: string) => void;
 }) {
   const { t } = useTranslation("openhands");
@@ -1448,6 +1581,7 @@ function PromptFields({
       label={t(I18nKey.AUTOMATIONS$PROMPT)}
       suffix={updatedSuffix}
       isStreaming={isStreaming}
+      errorText={errorText}
     >
       <div className="rounded-xl border border-[var(--oh-border)] bg-base-secondary">
         <textarea
@@ -1775,12 +1909,14 @@ function Field({
   suffix,
   horizontal = false,
   isStreaming = false,
+  errorText,
   children,
 }: {
   label: string;
   suffix?: string;
   horizontal?: boolean;
   isStreaming?: boolean;
+  errorText?: string;
   children: ReactNode;
 }) {
   return (
@@ -1799,6 +1935,14 @@ function Field({
         )}
       </span>
       <div className="min-w-0 flex-1">{children}</div>
+      {errorText ? (
+        <span
+          role="alert"
+          className="text-xs leading-5 text-[var(--oh-warning)]"
+        >
+          {errorText}
+        </span>
+      ) : null}
     </label>
   );
 }
