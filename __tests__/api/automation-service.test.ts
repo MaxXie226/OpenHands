@@ -765,5 +765,18 @@ describe("AutomationService", () => {
       );
       expect(result).toEqual(mockRun);
     });
+
+    it("sends a synthetic event payload when provided", async () => {
+      mockPost.mockResolvedValue({ data: mockRun });
+
+      await AutomationService.dispatchServerDraft("draft-1", {
+        eventPayload: { type: "issue.created", action: "opened" },
+      });
+
+      expect(mockPost).toHaveBeenCalledWith(
+        "/api/automation/v1/drafts/draft-1/dispatch",
+        { event_payload: { type: "issue.created", action: "opened" } },
+      );
+    });
   });
 });

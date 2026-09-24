@@ -138,6 +138,13 @@ function getDraftTriggerSummary(
   return schedule ?? t(I18nKey.AUTOMATIONS$DETAIL$TRIGGER_SCHEDULE);
 }
 
+function isEventTriggeredDraft(draft: AutomationDraftApiResponse): boolean {
+  const trigger = draft.draft.trigger as Record<string, unknown> | undefined;
+  return Boolean(
+    trigger && typeof trigger === "object" && trigger.type === "event",
+  );
+}
+
 function getDraftValidationLabel(
   draft: AutomationDraftApiResponse,
   t: TFunction,
@@ -218,7 +225,9 @@ function SavedDraftsGroup({
           const isResuming = resumingDraftId === draft.id;
           const isDeleting = deletingDraftId === draft.id;
           const isTesting = testingDraftId === draft.id;
-          const canTest = draft.dispatchable && !isTesting;
+          const canTestDirectly =
+            draft.dispatchable && !isEventTriggeredDraft(draft);
+          const canTest = canTestDirectly && !isTesting;
           return (
             <li
               key={draft.id}
@@ -292,7 +301,7 @@ function SavedDraftsGroup({
                       ? t(I18nKey.AUTOMATION_SETUP$RESUMING_DRAFT)
                       : t(I18nKey.AUTOMATION_SETUP$RESUME_DRAFT)}
                   </BrandButton>
-                  {draft.dispatchable ? (
+                  {canTestDirectly ? (
                     <BrandButton
                       type="button"
                       variant="secondary"

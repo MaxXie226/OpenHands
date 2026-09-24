@@ -1,4 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -633,6 +639,61 @@ describe("AutomationSetupPanel", () => {
           "Minimum interval is 5 minutes.",
         ),
       );
+      expect(AutomationService.dispatchServerDraft).not.toHaveBeenCalled();
+    });
+
+    it("sends synthetic JSON payload when testing an event draft", async () => {
+      vi.mocked(AutomationService.createServerDraft).mockResolvedValue(
+        dispatchableDraft,
+      );
+      vi.mocked(AutomationService.dispatchServerDraft).mockResolvedValue({
+        id: "run-1",
+        status: "PENDING" as never,
+        conversation_id: "conv-run-1",
+        bash_command_id: null,
+        error_detail: null,
+        started_at: "2026-01-01T00:00:00.000Z",
+        completed_at: null,
+        automation_id: "auto-draft-1",
+      } as never);
+
+      const user = userEvent.setup();
+      renderPanel();
+
+      await user.click(screen.getByText("AUTOMATIONS$DETAIL$TRIGGER_EVENT"));
+      const payloadInput = await screen.findByTestId(
+        "automation-setup-event-test-payload",
+      );
+      fireEvent.change(payloadInput, {
+        target: {
+          value: JSON.stringify({ type: "issue.created", action: "opened" }),
+        },
+      });
+      await user.click(screen.getByTestId("automation-setup-test"));
+
+      await waitFor(() =>
+        expect(AutomationService.dispatchServerDraft).toHaveBeenCalledWith(
+          "draft-1",
+          { eventPayload: { type: "issue.created", action: "opened" } },
+        ),
+      );
+    });
+
+    it("requires valid JSON before testing an event draft", async () => {
+      const user = userEvent.setup();
+      renderPanel();
+
+      await user.click(screen.getByText("AUTOMATIONS$DETAIL$TRIGGER_EVENT"));
+      const payloadInput = await screen.findByTestId(
+        "automation-setup-event-test-payload",
+      );
+      fireEvent.change(payloadInput, { target: { value: "not json" } });
+      await user.click(screen.getByTestId("automation-setup-test"));
+
+      expect(screen.getByTestId("automation-setup-status")).toHaveTextContent(
+        "AUTOMATION_SETUP$TEST_EVENT_PAYLOAD_INVALID",
+      );
+      expect(AutomationService.createServerDraft).not.toHaveBeenCalled();
       expect(AutomationService.dispatchServerDraft).not.toHaveBeenCalled();
     });
 

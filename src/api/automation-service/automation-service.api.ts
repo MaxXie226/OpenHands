@@ -887,9 +887,15 @@ class AutomationService {
    * An undispatchable draft answers 422 with `{ message, errors }`; callers
    * should surface those errors rather than treating them as transport errors.
    */
-  static async dispatchServerDraft(draftId: string): Promise<AutomationRun> {
+  static async dispatchServerDraft(
+    draftId: string,
+    options: { eventPayload?: Record<string, unknown> } = {},
+  ): Promise<AutomationRun> {
     const active = getActiveBackend().backend;
     const path = `${AUTOMATION_BASE_PATH}/v1/drafts/${encodeURIComponent(draftId)}/dispatch`;
+    const body = options.eventPayload
+      ? { event_payload: options.eventPayload }
+      : undefined;
 
     if (active.kind === "cloud") {
       return callCloudProxy<AutomationRun>({
@@ -897,10 +903,13 @@ class AutomationService {
         method: "POST",
         path,
         headers: await buildAutomationRequestHeaders(),
+        body,
       });
     }
 
-    const { data } = await localAutomationAxios.post<AutomationRun>(path);
+    const { data } = body
+      ? await localAutomationAxios.post<AutomationRun>(path, body)
+      : await localAutomationAxios.post<AutomationRun>(path);
     return data;
   }
 

@@ -196,6 +196,35 @@ function streamingHighlightClassName(isStreaming: boolean) {
   return isStreaming ? streamingFieldHighlightClassName : undefined;
 }
 
+function buildDefaultEventTestPayload(
+  eventSource: string = DEFAULT_EVENT_SOURCE,
+  eventKey: string = DEFAULT_EVENT_KEY,
+): string {
+  return `${JSON.stringify(
+    {
+      source: eventSource || DEFAULT_EVENT_SOURCE,
+      event: eventKey || DEFAULT_EVENT_KEY,
+      action: "test",
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+function parseEventTestPayload(value: string): Record<string, unknown> | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 function buildInitialForm(
   draft: AutomationSetupDraft,
 ): AutomationSetupFormValues {
@@ -520,6 +549,10 @@ export function AutomationSetupPanel({
   const { t } = useTranslation("openhands");
   const { navigate } = useNavigation();
   const [form, setForm] = useState(() => buildInitialForm(draft));
+  const [eventTestPayload, setEventTestPayload] = useState(() =>
+    buildDefaultEventTestPayload(DEFAULT_EVENT_SOURCE, DEFAULT_EVENT_KEY),
+  );
+  const [isEventTestPayloadDirty, setIsEventTestPayloadDirty] = useState(false);
   const [fieldMetadata, setFieldMetadata] = useState(
     () => draft.fieldMetadata ?? {},
   );
@@ -658,6 +691,11 @@ export function AutomationSetupPanel({
     showTimeout,
     timeoutSeconds,
   } = form;
+
+  useEffect(() => {
+    if (isEventTestPayloadDirty) return;
+    setEventTestPayload(buildDefaultEventTestPayload(eventSource, eventKey));
+  }, [eventSource, eventKey, isEventTestPayloadDirty]);
 
   const clearQueuedStreams = useCallback(() => {
     streamGenerationRef.current += 1;
@@ -1056,6 +1094,15 @@ export function AutomationSetupPanel({
   };
   const handleTest = async () => {
     if (!validateRequiredFields()) return;
+    const eventPayload =
+      triggerKind === "event" ? parseEventTestPayload(eventTestPayload) : null;
+    if (triggerKind === "event" && eventPayload === null) {
+      setStatusMessage({
+        kind: "error",
+        text: t(I18nKey.AUTOMATION_SETUP$TEST_EVENT_PAYLOAD_INVALID),
+      });
+      return;
+    }
     setIsSubmitting(true);
     setSaveState("saving");
     try {
@@ -1078,7 +1125,11 @@ export function AutomationSetupPanel({
         return;
       }
 
-      const run = await AutomationService.dispatchServerDraft(saved.id);
+      const run = eventPayload
+        ? await AutomationService.dispatchServerDraft(saved.id, {
+            eventPayload,
+          })
+        : await AutomationService.dispatchServerDraft(saved.id);
       const materializedAutomationId =
         typeof (run as unknown as Record<string, unknown>).automation_id ===
         "string"
@@ -1490,6 +1541,7 @@ export function AutomationSetupPanel({
                 eventSource={eventSource}
                 eventKey={eventKey}
                 eventFilter={eventFilter}
+                eventTestPayload={eventTestPayload}
                 updatedSuffixes={{
                   eventSource: agentUpdatedSuffix("eventSource"),
                   eventKey: agentUpdatedSuffix("eventKey"),
@@ -1499,6 +1551,10 @@ export function AutomationSetupPanel({
                 setEventSource={(value) => updateField("eventSource", value)}
                 setEventKey={(value) => updateField("eventKey", value)}
                 setEventFilter={(value) => updateField("eventFilter", value)}
+                setEventTestPayload={(value) => {
+                  setIsEventTestPayloadDirty(true);
+                  setEventTestPayload(value);
+                }}
               />
             )}
 
@@ -1842,15 +1898,18 @@ function EventFields({
   eventSource,
   eventKey,
   eventFilter,
+  eventTestPayload,
   updatedSuffixes,
   streamingField,
   setEventSource,
   setEventKey,
   setEventFilter,
+  setEventTestPayload,
 }: {
   eventSource: string;
   eventKey: string;
   eventFilter: string;
+  eventTestPayload: string;
   updatedSuffixes: Partial<
     Record<"eventSource" | "eventKey" | "eventFilter", string | undefined>
   >;
@@ -1858,6 +1917,7 @@ function EventFields({
   setEventSource: (value: string) => void;
   setEventKey: (value: string) => void;
   setEventFilter: (value: string) => void;
+  setEventTestPayload: (value: string) => void;
 }) {
   const { t } = useTranslation("openhands");
   return (
@@ -1898,6 +1958,27 @@ function EventFields({
             onChange={(event) => setEventFilter(event.target.value)}
             className={formControlFieldClassName}
           />
+        </Field>
+      </div>
+      <div className="md:col-span-2">
+        <Field label={t(I18nKey.AUTOMATION_SETUP$TEST_EVENT_PAYLOAD)}>
+          <div className="flex flex-col gap-2">
+            <textarea
+              data-testid="automation-setup-event-test-payload"
+              value={eventTestPayload}
+              onChange={(event) => setEventTestPayload(event.target.value)}
+              className={cn(
+                formControlMultilineFieldClassName,
+                "min-h-44 font-mono",
+              )}
+              placeholder={t(
+                I18nKey.AUTOMATION_SETUP$TEST_EVENT_PAYLOAD_PLACEHOLDER,
+              )}
+            />
+            <p className="text-xs leading-5 text-[var(--oh-muted)]">
+              {t(I18nKey.AUTOMATION_SETUP$TEST_EVENT_PAYLOAD_DESCRIPTION)}
+            </p>
+          </div>
         </Field>
       </div>
     </section>
